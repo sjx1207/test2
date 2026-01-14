@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OS FINAL: STORM & BUILD (FINAL FIX)</title>
+    <style>
+        /* ================= 全局基础 ================= */
+        :root { --bg: #000; --term-green: #0f0; }
+        body { margin: 0; background-color: var(--bg); color: var(--term-green); font-family: "Consolas", "Courier New", monospace; overflow: hidden; height: 100vh; display: flex; flex-direction: column; user-select: none; touch-action: none; cursor: crosshair; }
+        #bg-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; opacity: 0.15; pointer-events: none; z-index: 0; }
+
+        /* ================= 导航栏 ================= */
+        .nav-bar { height: 50px; background: #050505; display: flex; border-bottom: 2px solid #111; z-index: 200; position: relative;}
+        .nav-tab { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 15px; cursor: pointer; color: #444; font-weight: bold; background: #0a0a0a; border-right: 1px solid #222; transition: 0.3s; }
+        .nav-tab.active { background: #000; color: var(--term-green); border-bottom: 3px solid var(--term-green); text-shadow: 0 0 10px var(--term-green); }
+
+        /* ================= 容器 ================= */
+        .stage-container { display: none; flex: 1; position: relative; overflow: hidden; }
+        .stage-container.show { display: block; }
+
+        /* ================= 模式 A: 代码风暴 ================= */
+        .signal-drop {
+            position: absolute; padding: 10px 14px; /* 加大一点触控面积 */
+            font-size: 16px; font-weight: bold; font-family: inherit;
+            background: rgba(0, 20, 0, 0.9); 
+            border: 1px solid #005500; color: #00cc00;
+            cursor: pointer; z-index: 10; white-space: nowrap;
+            box-shadow: 0 0 5px rgba(0, 255, 0, 0.2);
+            will-change: transform, top; 
+            transition: all 0.2s; /* 动画过渡 */
+            border-radius: 4px;
+        }
+        .bracket { color: #004400; font-size: 0.8em; margin: 0 4px;}
+
+        /* 删除了 .success 类，改用 JS 直接控制 */
+        
+        .signal-drop.fail {
+            background: #ff0000 !important; color: #fff !important; 
+            border-color: #fff !important; box-shadow: 0 0 30px #ff0000 !important;
+            z-index: 999;
+        }
+
+        .mission-panel {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 140px;
+            background: rgba(0, 5, 0, 0.98); border-top: 1px solid var(--term-green);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 100;
+        }
+        .question-text { font-size: 20px; color: var(--term-green); text-align: center; max-width: 90%; line-height: 1.4; text-shadow: 0 0 8px var(--term-green); }
+        .cursor { display: inline-block; width: 10px; height: 3px; background: var(--term-green); animation: blink 1s infinite; }
+
+        /* ================= 模式 B: 矩阵构建 ================= */
+        .code-hud { position: absolute; top: 0; width: 100%; padding: 20px; background: rgba(0,0,0,0.85); border-bottom: 1px solid #333; z-index: 50; display: flex; flex-direction: column; align-items: center; }
+        .code-comment { color: #6a9955; margin-bottom: 10px; font-size: 14px; }
+        .code-main { font-size: 22px; color: #d4d4d4; display: flex; align-items: center; flex-wrap: wrap; justify-content: center;}
+        .build-slot { display: inline-flex; align-items: center; justify-content: center; border-bottom: 2px solid var(--term-green); margin: 0 5px; color: var(--term-green); font-weight: bold; min-width: 80px; }
+        .char-drop {
+            position: absolute; width: 50px; height: 50px; line-height: 50px; text-align: center;
+            font-size: 24px; font-weight: bold; background: rgba(10,10,10,0.95);
+            border: 2px solid #004400; color: #008800; cursor: pointer; z-index: 20; border-radius: 4px;
+        }
+
+        @keyframes blink { 50% { opacity:0 } }
+        .shake-screen { animation: shake 0.4s ease-in-out; }
+        @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-8px)} 75%{transform:translateX(8px)} }
+    </style>
+</head>
+<body>
+
+    <canvas id="bg-canvas"></canvas>
+
+    <div class="nav-bar">
+        <div class="nav-tab active" onclick="switchMode('select')" id="tab-select">[代码风暴] 选择题</div>
+        <div class="nav-tab" onclick="switchMode('build')" id="tab-build">[矩阵构建] 填空题</div>
+    </div>
+
+    <div id="sys-select" class="stage-container show">
+        <div id="sky-select"></div>
+        <div class="mission-panel">
+            <div style="font-size:12px; color:#005500; margin-bottom:8px;">root@kernel_debug:~$ grep "ANSWER"</div>
+            <div class="question-text">
+                <span id="q-select">SYSTEM READY...</span><span class="cursor">_</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="sys-build" class="stage-container">
+        <div class="code-hud" id="code-hud"></div>
+        <div id="sky-build"></div>
+    </div>
+
+    <script>
+    // ============================================
+    // 🔴 1. 题库配置
+    // ============================================
+    const DATA_SELECT = [
+            { 
+                q: "操作系统是一种？", 
+                correct: "系统软件", 
+                noise: ["工具软件", "通用软件", "应用软件", "杀毒软件", "办公软件"] 
+            },
+            { 
+                q: "引入多道程序的目的在于？", 
+                correct: "充分利用CPU", 
+                noise: ["充分利用存储器", "有利于代码共享", "提高响应速度", "减少内存消耗", "简化硬件结构"] 
+            },
+            { 
+                q: "分时系统时间片一定，响应时间越长是因为？", 
+                correct: "用户数越多", 
+                noise: ["用户数越少", "内存越多", "内存越少", "CPU越强", "硬盘越快"] 
+            },
+            { 
+                q: "现代操作系统最基本的两个特征？", 
+                correct: "并发和共享", 
+                noise: ["并发和不确定", "虚拟和不确定", "共享和虚拟", "多路和独立", "异步和持久"] 
+            },
+            { 
+                q: "系统调用的目的是？", 
+                correct: "请求系统服务", 
+                noise: ["终止系统服务", "申请系统资源", "释放系统资源", "调用子程序", "中断处理"] 
+            },
+            { 
+                q: "操作系统的基本类型主要有？", 
+                correct: "批处理、分时、实时", 
+                noise: ["单用户、多用户", "多任务系统", "网络操作系统", "分布式系统", "嵌入式系统"] 
+            },
+            { 
+                q: "从用户角度看，操作系统是？", 
+                correct: "用户与计算机接口", 
+                noise: ["资源的管理者", "软件模块集合", "流程组织者", "硬件的延伸", "虚拟扩充机"] 
+            },
+            { 
+                q: "进程100响应2s，最大时间片是？", 
+                correct: "20ms", 
+                noise: ["50ms", "10ms", "100ms", "200ms", "5ms"] 
+            },
+            { 
+                q: "哪个不是实时系统的主要目标？", 
+                correct: "资源利用率", 
+                noise: ["快速处理", "及时响应", "安全可靠", "高可靠性", "低延迟"] 
+            },
+            { 
+                q: "开机后，操作系统最终加载到？", 
+                correct: "RAM", 
+                noise: ["EPROM", "ROM", "BIOS", "硬盘", "光盘"] 
+            },
+            { 
+                q: "系统有n(n>2)个进程，当前不再执行调度，哪种不可能？", 
+                correct: "没有运行进程，有2个就绪进程，n-2个阻塞进程。", 
+                noise: [
+                    "有一个运行进程，没有就绪进程，n-1个阻塞进程。", 
+                    "有一个运行进程，n-1个就绪进程，没有阻塞进程。", 
+                    "有一个运行进程，有一个就绪进程，n-2个阻塞进程。"
+                ] 
+            },
+            { 
+                q: "所谓临界区是指访问临界资源的（   ）。", 
+                correct: "程序段", 
+                noise: ["一个缓冲区", "一段数据区", "同步机制"] 
+            },
+            { 
+                q: "进程之间交换数据不能通过（ ）途径进行。", 
+                correct: "访问进程地址空间", 
+                noise: ["访问共享存储区", "消息传递", "共享文件"] 
+            },
+            { 
+                q: "两个合作进程（Cooperating Processes）无法利用（ ）交换数据。", 
+                correct: "高级语言程序设计中的全局变量", 
+                noise: ["共享内存", "文件系统", "消息传递系统"] 
+            },
+            { 
+                q: "下列关于进程和线程的叙述中,正确的是？", 
+                correct: "不管系统是否支持线程,进程都是资源分配的基本单位", 
+                noise: [
+                    "系统级线程和用户级线程的切换都需要内核的支持", 
+                    "同一进程中的各个线程拥有各自不一的地址空间", 
+                    "线程是资源分配的基本单位,进程是调度的基本单位"
+                ] 
+            },
+            { 
+                q: "在支持多线程的系统中,进程P创建的若干个线程不能共享的是？", 
+                correct: "进程 P 中某线程的栈指针", 
+                noise: ["进程 P 中打开的文件", "进程 P 的代码段", "进程 P 的全局变量"] 
+            },
+            { 
+                q: "使用TSL指令实现进程互斥，下列叙述正确的是？", 
+                correct: "等待进入临界区的进程不会主动放弃CPU", 
+                noise: [
+                    "上述伪代码满足“让权等待”的同步准则", 
+                    "While(TSL(&lock))语句应在关中断状态下执行", 
+                    "退出临界区的进程负责唤醒阻塞态进程"
+                ] 
+            },
+            { 
+                q: "实现临界区互斥机制必须遵循的是(I.互斥 II.空闲让进 III.有限等待 IV.让权等待)？", 
+                correct: "I,II,III", 
+                noise: ["I,IV", "II,III", "I,III,IV"] 
+            },
+            { 
+                q: "导致用户态切换到内核态的操作(I.除零 II.sin函数 III.read调用)？", 
+                correct: "仅I、III", 
+                noise: ["仅II、III", "仅I、II", "I、II和III"] 
+            },
+            { 
+                q: "下列关于管道(Pipe)通信的叙述中，正确的是？", 
+                correct: "进程对管道进行读操作和写操作都可能被阻塞", 
+                noise: [
+                    "一个管道可实现双向数据传输", 
+                    "管道的容量仅受磁盘容量大小限制", 
+                    "一个管道只能有一个读进程或一个写进程对其操作"
+                ] 
+            },
+            { 
+                q: "有三个进程共享程序段，每次只允许两个进入，信号量s的取值范围是？", 
+                correct: "2，1，0，-1", 
+                noise: ["1，0，-1，-2", "2，1，0，-1，-2", "3，2，1，0"] 
+            },
+            { 
+                q: "用P、V操作管理临界区时，信号量的初值一般应定义为？", 
+                correct: "1", 
+                noise: ["0", "-1", "任意值"] 
+            },
+            { 
+                q: "避免死锁的一个著名的算法是？", 
+                correct: "银行家算法", 
+                noise: ["先入先出法", "资源按序分配法", "优先级算法"] 
+            },
+            { 
+                q: "为了对紧急进程或重要进程进行调度，调度算法应采用？", 
+                correct: "优先级法", 
+                noise: ["短作业优先法", "时间片轮转法", "先来先服务法"] 
+            },
+            { 
+                q: "进程在使用完资源后由自己释放，这属于死锁必要条件的？", 
+                correct: "不剥夺条件", 
+                noise: ["防止系统进入不安全状态", "互斥条件", "请求和释放条件"] 
+            },
+            { 
+                q: "分时操作系统通常采用什么调度算法来为用户服务？", 
+                correct: "时间片轮转", 
+                noise: ["优先级", "短作业优先", "先来先服务"] 
+            },
+            { 
+                q: "5个作业(10,6,2,4,8)，平均周转时间为14的是哪个算法？", 
+                correct: "短作业优先", 
+                noise: ["优先级调度", "先来先服务(按照顺序10、6、2、4、8)", "时间片轮转(时间片为1)"] 
+            },
+            { 
+                q: "时间片轮转调度算法，当时间片过大时，就会转化为？", 
+                correct: "先来先服务", 
+                noise: ["高响应比优先", "以上选项都不对", "短进程优先"] 
+            },
+            { 
+                q: "若每个作业只能建立一个进程，为实现人机交互，应采用？", 
+                correct: "时间片轮转调度算法", 
+                noise: ["多级反馈队列调度算法", "FCFS调度算法", "短作业优先调度算法"] 
+            },
+            { 
+                q: "有利于CPU繁忙型作业，而不利于I/0繁忙型作业的是？", 
+                correct: "先来先服务调度算法", 
+                noise: ["优先权调度算法", "短作业(进程)优先算法", "时间片轮转调度算法"] 
+            },
+            { 
+                q: "时间片轮转调度算法是为了？", 
+                correct: "多个终端能够得到系统及时响应", 
+                noise: ["需要CPU时间最少的进程最先做", "使系统变得高效", "优先级较高的进程得到及时响应"] 
+            },
+            { 
+                q: "下面有关选择进程调度算法的准则中不正确的是？", 
+                correct: "适当增长进程就绪队列的等待时间", 
+                noise: ["尽快响应交互式用户的请求", "尽量提高处理器利用率", "尽可能提高系统吞吐量"] 
+            },
+            { 
+                q: "地址变换机构将逻辑地址变换为物理地址，形成该逻辑地址的阶段是？", 
+                correct: "链接", 
+                noise: ["编译", "装载", "编辑"] 
+            },
+            { 
+                q: "在连续式可变分区管理中，采用拼接技术的目的是？", 
+                correct: "合并空闲区", 
+                noise: ["便于地址转换", "增加主存容量", "合并分配区"] 
+            },
+            { 
+                q: "不会产生内部碎片的存储管理是？", 
+                correct: "分段式存储管理", 
+                noise: ["分页式存储管理", "段页式存储管理", "固定分区存储管理"] 
+            },
+            { 
+                q: "页式存储管理中，页表的始地址存放在哪里？", 
+                correct: "寄存器", 
+                noise: ["快表", "内存", "存储页表"] 
+            },
+            { 
+                q: "采用段式存储管理时，一个程序如何分段是在（ ）时决定的？", 
+                correct: "用户编程", 
+                noise: ["装作业", "分配主存", "程序执行"] 
+            },
+            { 
+                q: "（ ）存储管理方式提供一维地址结构？", 
+                correct: "分页", 
+                noise: ["以上答案都不正确", "分段和段页式", "分段"] 
+            },
+            { 
+                q: "在缺页处理过程中，操作系统执行的操作可能是(I.改页表 II.磁盘I/O III.分配页框)？", 
+                correct: "I、II和III", 
+                noise: ["仅I、II", "仅III", "仅II"] 
+            },
+            { 
+                q: "当系统发生抖动（Thrashing）时，可用采取的有效措施是？", 
+                correct: "仅I (撤销部分进程)", 
+                noise: ["仅I、II", "仅II", "仅III"] 
+            },
+            { 
+                q: "页式虚拟存储管理的主要特点是？", 
+                correct: "不要求同时全部装入且不要求连续", 
+                noise: ["不要求进行页面置换", "不要求进行缺页中断处理", "必须装入连续区域"] 
+            },
+            { 
+                q: "产生内存抖动（Thrashing）的主要原因是？", 
+                correct: "页面置换算法不合理", 
+                noise: ["CPU调度算法不合理", "内存空间太小", "CPU运行速度太慢", "进程优先级太低"] 
+            },
+            { 
+                q: "虚拟存储管理系统的基础是程序的什么原理？", 
+                correct: "局部性", 
+                noise: ["虚拟性", "动态性", "全局性", "并发性"] 
+            },
+            { 
+                q: "FIFO算法中，页帧增加，缺页中断次数？", 
+                correct: "可能增加也可能减少", 
+                noise: ["一定增加", "一定减少", "无影响", "成倍减少"] 
+            },
+            { 
+                q: "CPU利用率10%，磁盘交换区99.7%，如何改进(I.增内存 III.减多道程序)？", 
+                correct: "I、III", 
+                noise: ["II、III、V", "I、II、III、IV", "II、VI", "仅I", "仅IV"] 
+            },
+            { 
+                q: "逻辑设备表（LUT）的作用是？", 
+                correct: "建立逻辑与物理设备对应关系", 
+                noise: ["管理逻辑设备", "实现输入/输出", "管理物理设备", "分配设备控制器"] 
+            },
+            { 
+                q: "磁头在53，访问序列98,37...下一次去37，只能是？", 
+                correct: "电梯调度（扫描算法）", 
+                noise: ["最短寻道时间优先", "先来先服务", "循环扫描"] 
+            },
+            { 
+                q: "磁头105向增方向，序列35,45...195，SCAN算法序列是？", 
+                correct: "110,170,180,195,68,45,35,12", 
+                noise: [
+                    "110,170,180,195,12,35,45,68", 
+                    "12,35,45,68,110,170,180,195", 
+                    "110,68,45,35,12,170,180,195"
+                ] 
+            },
+            { 
+                q: "用户程序发出磁盘I/O请求后，正确处理流程？", 
+                correct: "系统调用->设备驱动->中断处理", 
+                noise: [
+                    "设备驱动->中断处理->系统调用", 
+                    "系统调用->中断处理->设备驱动", 
+                    "设备驱动->系统调用->中断处理"
+                ] 
+            },
+            { 
+                q: "SPOOLing技术的主要目的是？", 
+                correct: "提高独占设备的利用率", 
+                noise: ["提高CPU速度", "减轻编程负担", "提供主辅存接口", "减少I/O中断"] 
+            },
+            { 
+                q: "操作系统中采用的以空间换取时间的技术是？", 
+                correct: "SPOOLing技术", 
+                noise: ["覆盖与交换技术", "通道技术", "虚拟存储技术", "多道程序技术"] 
+            },
+            { 
+                q: "在SPOOLing系统中，用户进程实际分配到的是？", 
+                correct: "内存区，即虚拟设备", 
+                noise: ["设备的一部分存储区", "用户所要求的外设", "设备的一部分空间", "独占设备的物理端口"] 
+            },
+            { 
+                q: "获得设备驱动程序入口地址的工作在哪一层完成？", 
+                correct: "设备独立性软件", 
+                noise: ["用户层软件", "设备驱动程序", "中断处理程序", "硬件层"] 
+            },
+            { 
+                q: "引起I/O中断的事件有？", 
+                correct: "数据传送完毕", 
+                noise: ["访存越界", "缺页", "指令错", "算术溢出"] 
+            },
+            { 
+                q: "可能会随时改变移动臂运动方向的磁盘调度算法是？", 
+                correct: "FCFS", 
+                noise: ["循环扫描", "电梯算法", "最短寻道时间优先", "单向扫描"] 
+            },
+            { 
+                q: "如果I/O时间比CPU处理时间短得多，则缓冲区？", 
+                correct: "几乎无效", 
+                noise: ["均衡", "最有效", "效率翻倍", "能解决死锁"] 
+            },
+            { 
+                q: "设当前工作目录的主要目的是？", 
+                correct: "加快文件的检索速度", 
+                noise: ["外存空间", "节省内存空间", "加快文件的读/写速度", "为了安全"] 
+            },
+            { 
+                q: "UNIX中，输入/输出设备看做是？", 
+                correct: "特殊文件", 
+                noise: ["目录文件", "索引文件", "普通文件", "链接文件"] 
+            },
+            { 
+                q: "下列文件中属于逻辑结构的文件是？", 
+                correct: "流式文件", 
+                noise: ["链接文件", "连续文件", "系统文件", "索引文件", "哈希文件"] 
+            },
+            { 
+                q: "相对路径名是从哪里开始追溯的？", 
+                correct: "当前目录", 
+                noise: ["多级目录", "根目录", "二级目录", "父目录"] 
+            },
+            { 
+                q: "FAT32的文件目录项不包括？", 
+                correct: "文件控制块的物理位置", 
+                noise: ["文件所在的物理位置", "文件名", "文件访问权限说明", "文件大小", "创建时间"] 
+            },
+            { 
+                q: "文件系统采用多级目录结构的目的是？", 
+                correct: "解决命名冲突", 
+                noise: ["缩短传送时间", "减少系统开销", "节省存储空间", "提高文件安全性"] 
+            },
+            { 
+                q: "如果有两个文件重名，不应采用哪种结构？", 
+                correct: "单级目录结构", 
+                noise: ["多级目录结构", "树形目录结构", "两级目录结构", "无环图目录结构"] 
+            },
+            { 
+                q: "保证未经授权不能使用文件，解决方法是？", 
+                correct: "文件保护", 
+                noise: ["文件保密", "文件共享", "文件转储", "文件隐藏"] 
+            },
+            { 
+                q: "不利于文件长度动态增长的物理结构是？", 
+                correct: "连续结构", 
+                noise: ["索引结构", "Hash结构", "链接结构", "显式链接"] 
+            },
+            { 
+                q: "文件的存储空间管理实质上是对什么的组织和管理？", 
+                correct: "外存空闲区", 
+                noise: ["文件控制块", "文件目录", "外存已占用区域", "内存缓冲区"] 
+            },
+            { 
+                q: "建立指示逻辑和物理记录对应关系索引表的文件是？", 
+                correct: "索引文件", 
+                noise: ["顺序文件", "逻辑文件", "链接文件", "哈希文件"] 
+            },
+            { 
+                q: "哪种物理文件顺序访问的速度最快？", 
+                correct: "顺序文件", 
+                noise: ["隐式链接文件", "直接文件", "索引文件", "显式链接文件"] 
+            },
+            { 
+                q: "Linux的extfs采用什么管理空闲存储空间？", 
+                correct: "位示图", 
+                noise: ["文件分配表", "成组链接法", "空闲表", "空闲链表"] 
+            },
+            { 
+                q: "磁盘高速缓冲设在内存中的主要目的是？", 
+                correct: "提高磁盘I/O的速度", 
+                noise: ["提高CPU执行指令的速度", "保证数据的一致性", "缩短寻道时间", "节省硬盘空间"] 
+            }
+        ];
+
+        // 2. 填空题数据 (逐字构建)
+        // 这里的 correct 就是你要在天上抓的字，顺序必须对
+        const DATA_BUILD = [
+            {
+                comment: "// 进程由执行变就绪/阻塞，现场信息保存在？",
+                pre: `Save(Context) -> `,
+                post: `;`,
+                correct: "进程控制块" 
+            },
+            {
+                comment: "// 进程存在的唯一标识是什么？",
+                pre: `Identity = `,
+                post: `; // PCB`,
+                correct: "进程控制块"
+            },
+            {
+                comment: "// 等待键盘输入完成，进程由阻塞态变为？",
+                pre: `State: Blocked -> `,
+                post: `;`,
+                correct: "就绪态"
+            },
+            {
+                comment: "// 资源的有序分配策略可以破坏死锁的什么条件？",
+                pre: `Break_Deadlock( `,
+                post: ` );`,
+                correct: "循环等待"
+            },
+            {
+                comment: "// 一次性申请所有资源，破坏死锁的什么条件？",
+                pre: `Prevent( `,
+                post: ` );`,
+                correct: "请求和保持"
+            },
+            {
+                comment: "// 8页(2^3) * 1024B(2^10)，逻辑地址有效位是多少？",
+                pre: `Logical_Bits = `,
+                post: ` bits;`,
+                correct: "13" // 3 + 10 = 13
+            },
+            {
+                comment: "// 段页式管理中，每道程序都有一张？",
+                pre: `Lookup_Table = `,
+                post: `;`,
+                correct: "段表"
+            },
+            {
+                comment: "// 首次适应算法，空闲区按什么次序登记？",
+                pre: `Sort_Free_List( `,
+                post: ` );`,
+                correct: "地址递增"
+            },
+            {
+                comment: "// 内存紧张将进程调至外存，是什么技术？",
+                pre: `Memory.Swap = `,
+                post: `_Tech;`,
+                correct: "对换"
+            },
+            {
+                comment: "// 逻辑地址24位，段内16位，最多分为多少个段？",
+                pre: `Max_Segments = `,
+                post: `; // 2^(24-16)`,
+                correct: "256"
+            },
+            {
+                comment: "// 设备独立性是指谁独立于物理设备？",
+                pre: `Independence( `,
+                post: ` , PhysicalDev);`,
+                correct: "用户程序"
+            },
+            {
+                comment: "// 磁盘调度目标是使什么时间最短？",
+                pre: `Minimize( `,
+                post: `_Time );`,
+                correct: "寻道时间"
+            },
+            {
+                comment: "// 打印机的I/O控制方式常采用？",
+                pre: `Printer_Mode = `,
+                post: `;`,
+                correct: "中断驱动方式" 
+            },
+            {
+                comment: "// 磁盘的I/O控制方式常采用？",
+                pre: `Disk_Mode = `,
+                post: `;`,
+                correct: "DMA控制方式"
+            },
+            {
+                comment: "// DMA允许哪两个设备直接交换数据？",
+                pre: `DMA_Link( Memory, `,
+                post: ` );`,
+                correct: "I/O设备"
+            },
+            {
+                comment: "// 9130字节文件，块大小4096，需要几个块？",
+                pre: `Block_Count = ceil(9130/4096) = `,
+                post: `;`,
+                correct: "3" 
+            },
+            {
+                comment: "// 文件目录的最主要功能是实现？",
+                pre: `Dir_Function = `,
+                post: `;`,
+                correct: "按名存取"
+            },
+            {
+                comment: "// 文件打开(Open)操作返回给用户的是？",
+                pre: `return `,
+                post: `; // fd`,
+                correct: "文件描述符"
+            },
+            {
+                comment: "// [Linux] 切换到根目录",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "cd /" // 注意中间有个空格！
+            },
+            {
+                comment: "// [Vim] 进入插入模式的按键",
+                pre: `Vim_Command: `,
+                post: ``,
+                correct: "i"
+            },
+            {
+                comment: "// [Linux] 新建文件 newfile",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "touch newfile"
+            },
+            {
+                comment: "// [Linux] 新建文件夹 newdir",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "mkdir newdir"
+            },
+            {
+                comment: "// [Linux] 列出所有文件(含隐藏)在根目录",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "ls -a /"
+            },
+            {
+                comment: "// 显示当前用户名",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "whoami" 
+            },
+            {
+                comment: "// 创建新用户 zhangsan 并自动创建主目录",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "useradd -m zhangsan"
+            },
+            {
+                comment: "// 为 zhangsan 设置密码",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "passwd zhangsan"
+            },
+            {
+                comment: "// 切换到 zhangsan 用户并变更环境",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "su - zhangsan"
+            },
+            {
+                comment: "// 创建用户组 project-alpha",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "groupadd project-alpha"
+            },
+            {
+                comment: "// 将 zhangsan 加入 project-alpha (附加组)",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "usermod -aG project-alpha zhangsan"
+            },
+            {
+                comment: "// 删除用户 zhangsan 及其主目录",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "userdel -r zhangsan"
+            },
+            {
+                comment: "// 删除用户组 project-alpha",
+                pre: `root@sys:~$ `,
+                post: ``,
+                correct: "groupdel project-alpha"
+            },
+            {
+                comment: "// 存储用户账户信息的文件路径",
+                pre: `Path = `,
+                post: ``,
+                correct: "/etc/passwd"
+            },
+            {
+                comment: "// [权限] 所有者读(4) 同组写(2) 其他执行(1)",
+                pre: `root@sys:~$ `,
+                post: ` oldFile4`,
+                correct: "chmod 421"
+            },
+            {
+                comment: "// [权限] 为其他用户(o)添加(+)执行权限(x)",
+                pre: `root@sys:~$ `,
+                post: ` oldFile3`,
+                correct: "chmod o+x"
+            },
+            {
+                comment: "// [权限] 为同组用户(g)删除(-)写权限(w)",
+                pre: `root@sys:~$ `,
+                post: ` oldFile2`,
+                correct: "chmod g-w"
+            },
+            {
+                comment: "// [坑点] 将所有者(u)权限'设置'(=)为可执行(x)",
+                pre: `root@sys:~$ `,
+                post: ` oldFile1`,
+                correct: "chmod u=x"
+            }
+        ];
+
+    const NOISE_CHARS = "ABCDFGHJKLMNOPQRSTUVWXYZ0123456789代码系统进程线程存储文件设备管理死锁";
+
+    // ============================================
+    // 🔵 2. 全局控制与背景
+    // ============================================
+    let currentMode = 'select';
+    let idxSelect = 0, idxBuild = 0;
+    let globalTimer = null;
+    let isActive = false;
+    let isTransitioning = false; 
+
+    // --- 背景流光 ---
+    const cvs = document.getElementById('bg-canvas');
+    const ctx = cvs.getContext('2d');
+    let drops = [];
+    function initCanvas() {
+        cvs.width = window.innerWidth; cvs.height = window.innerHeight;
+        drops = Array(Math.floor(cvs.width / 16)).fill(1);
+    }
+    function drawBg() {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
+        ctx.fillRect(0, 0, cvs.width, cvs.height);
+        ctx.fillStyle = "#0f0"; ctx.font = "14px monospace";
+        for (let i = 0; i < drops.length; i++) {
+            const text = NOISE_CHARS[Math.floor(Math.random() * NOISE_CHARS.length)];
+            ctx.fillText(text, i * 16, drops[i] * 16);
+            if (drops[i] * 16 > cvs.height && Math.random() > 0.975) drops[i] = 0;
+            drops[i]++;
+        }
+        requestAnimationFrame(drawBg);
+    }
+    window.addEventListener('resize', initCanvas);
+    initCanvas(); drawBg();
+
+    // ============================================
+    // 🟡 3. 游戏模式切换
+    // ============================================
+    window.switchMode = function(mode) {
+        currentMode = mode; isActive = false; isTransitioning = false;
+        clearInterval(globalTimer);
+        document.querySelectorAll('.stage-container').forEach(el => el.classList.remove('show'));
+        document.getElementById('sys-' + mode).classList.add('show');
+        document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+        document.getElementById('tab-' + mode).classList.add('active');
+        document.getElementById('sky-select').innerHTML = '';
+        document.getElementById('sky-build').innerHTML = '';
+
+        setTimeout(() => {
+            if(mode === 'select') startSelect();
+            else startBuild();
+        }, 200);
+    }
+
+    // ============================================
+    // 🟣 4. 模式A: 代码风暴 (选择题)
+    // ============================================
+    const skySelect = document.getElementById('sky-select');
+    const qSelect = document.getElementById('q-select');
+
+    function startSelect() {
+        isActive = true; isTransitioning = false;
+        skySelect.innerHTML = ''; 
+        
+        const data = DATA_SELECT[idxSelect];
+        qSelect.innerText = `[Q${idxSelect+1}] ${data.q}`;
+        
+        if (globalTimer) clearInterval(globalTimer);
+        
+        // ⚡️⚡️ 优化1：生成间隔从 350 改为 800 (变慢，减少卡顿) ⚡️⚡️
+        globalTimer = setInterval(() => {
+            if(!isActive || isTransitioning) return; 
+            const isCorrect = Math.random() < 0.3; 
+            if (isCorrect) spawnSignalDrop(data.correct, true);
+            else spawnSignalDrop(data.noise[Math.floor(Math.random() * data.noise.length)], false);
+        }, 400); 
+    }
+
+    function spawnSignalDrop(text, isCorrect) {
+        const el = document.createElement('div');
+        el.innerHTML = `<span class="bracket">&lt;</span>${text}<span class="bracket">/&gt;</span>`;
+        el.className = 'signal-drop';
+        
+        const startX = Math.random() * (window.innerWidth - 120) + 10;
+        let currentY = -60;
+        
+        el.style.left = startX + 'px';
+        el.style.top = currentY + 'px';
+        
+        skySelect.appendChild(el);
+
+        // ⚡️⚡️ 优化2：下落速度变慢 (从 2.5+2 改为 1.5+1) ⚡️⚡️
+        const speed = Math.random() * 1.5 + 1; 
+        
+        // ⚡️⚡️ 优化3：刷新率从 16ms 改为 30ms (大幅减轻CPU负担，解决卡顿) ⚡️⚡️
+        const fall = setInterval(() => {
+            if (!isActive) { clearInterval(fall); return; }
+            currentY += speed;
+            el.style.top = currentY + 'px'; 
+            
+            if (currentY > window.innerHeight) { el.remove(); clearInterval(fall); }
+        }, 30);
+
+        const clickHandler = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            if (el.dataset.clicked === "true") return;
+            el.dataset.clicked = "true";
+
+            if(isCorrect) {
+                if(navigator.vibrate) navigator.vibrate(50);
+                
+                isTransitioning = true;
+                clearInterval(fall); 
+
+                // 样式变换
+                el.style.transition = "all 0.3s ease";
+                el.style.backgroundColor = "#00ff00"; 
+                el.style.color = "#000000";
+                el.style.border = "2px solid #fff";
+                el.style.boxShadow = "0 0 50px #00ff00, 0 0 100px #00ff00"; 
+                el.style.zIndex = "99999"; 
+                el.style.transform = "scale(1.5)"; 
+                
+                const others = document.querySelectorAll('.signal-drop');
+                others.forEach(o => {
+                    if(o !== el) o.style.opacity = '0.05';
+                });
+
+                setTimeout(() => {
+                    idxSelect = (idxSelect + 1) % DATA_SELECT.length;
+                    el.remove();
+                    startSelect(); 
+                }, 2000);
+
+            } else {
+                if(navigator.vibrate) navigator.vibrate([50, 50, 50]);
+                el.style.backgroundColor = "#ff0000";
+                el.style.color = "#ffffff";
+                document.body.classList.add('shake-screen');
+                setTimeout(()=>document.body.classList.remove('shake-screen'), 400);
+            }
+        };
+
+        el.onmousedown = clickHandler;
+        el.ontouchstart = clickHandler;
+    }
+
+    // ============================================
+    // 🟢 5. 模式B: 矩阵构建 (填空题) 
+    // ============================================
+    const codeHud = document.getElementById('code-hud');
+    const skyBuild = document.getElementById('sky-build');
+    let fillIndex = 0; let currentFilledText = "";
+
+    function startBuild() {
+        isActive = true; skyBuild.innerHTML = ''; fillIndex = 0; currentFilledText = "";
+        updateBuildDisplay();
+        if (globalTimer) clearInterval(globalTimer);
+        // ⚡️⚡️ 优化：填空题生成间隔改为 500ms ⚡️⚡️
+        globalTimer = setInterval(() => { if(!isActive) return; spawnCharDrop(); }, 500);
+    }
+
+    function updateBuildDisplay() {
+        const data = DATA_BUILD[idxBuild];
+        let filledHTML = "";
+        for(let i=0; i<currentFilledText.length; i++) filledHTML += `<span class="filled-char" style="color:#0f0">${currentFilledText[i]}</span>`;
+        codeHud.innerHTML = `<div class="code-comment">${data.comment}</div><div class="code-main">${data.pre}<span class="build-slot" id="build-slot">[ ${filledHTML}<span class="cursor">_</span> ]</span>${data.post}</div>`;
+    }
+
+    function spawnCharDrop() {
+        const data = DATA_BUILD[idxBuild];
+        const neededChar = data.correct[fillIndex];
+        const isTarget = Math.random() < 0.35;
+        const charToShow = isTarget && neededChar ? neededChar : NOISE_CHARS[Math.floor(Math.random() * NOISE_CHARS.length)];
+
+        const el = document.createElement('div');
+        el.className = 'char-drop'; el.innerText = charToShow;
+        el.style.left = Math.random() * (window.innerWidth - 60) + 'px';
+        let y = -50; el.style.top = y + 'px';
+        skyBuild.appendChild(el);
+
+        // ⚡️⚡️ 优化：速度变慢 ⚡️⚡️
+        const speed = Math.random() * 1.5 + 1;
+        // ⚡️⚡️ 优化：刷新率 30ms ⚡️⚡️
+        const fall = setInterval(() => {
+            if (!isActive || currentMode !== 'build') { clearInterval(fall); el.remove(); return; }
+            y += speed; 
+            el.style.top = y + 'px';
+            
+            if (y > window.innerHeight) { el.remove(); clearInterval(fall); }
+        }, 30);
+
+        const clickHandler = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            if(el.dataset.locked === 'true') return;
+            const currentNeed = data.correct[fillIndex];
+            if(charToShow === currentNeed) {
+                el.dataset.locked = 'true';
+                el.style.backgroundColor = "#fff"; 
+                el.style.color = "#000";
+                el.style.pointerEvents = "none";
+                currentFilledText += charToShow; fillIndex++; updateBuildDisplay();
+                setTimeout(() => el.remove(), 200);
+                if(fillIndex === data.correct.length) {
+                    isActive = false; clearInterval(globalTimer);
+                    document.getElementById('build-slot').style.textShadow = "0 0 20px #fff";
+                    setTimeout(() => { idxBuild = (idxBuild + 1) % DATA_BUILD.length; startBuild(); }, 1500);
+                }
+            } else {
+                el.style.backgroundColor = "#a00"; document.body.classList.add('shake-screen');
+                setTimeout(()=>document.body.classList.remove('shake-screen'), 400);
+            }
+        };
+        el.onmousedown = el.ontouchstart = clickHandler;
+    }
+
+    startSelect();
+</script>
+</body>
+</html>
